@@ -13,7 +13,7 @@ A popular issue can now draw several pull requests within days, often from peopl
 
 ## For maintainers: the GitHub Action
 
-Add `.github/workflows/dibs.yml`:
+[On the GitHub Marketplace](https://github.com/marketplace/actions/dibs-pr-overlap-check). Add `.github/workflows/dibs.yml`:
 
 ```yaml
 name: dibs
