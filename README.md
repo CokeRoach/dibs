@@ -49,7 +49,6 @@ When a pull request overlaps earlier work, dibs posts one comment, keeps it up t
 | `dibs: claimed` | Someone else said they would take the issue before this pull request was opened, within `claim-days` or with an open pull request of their own |
 | `dibs: assigned` | The issue is assigned to someone else |
 | `dibs: already-fixed` | A merged pull request already refers to the issue |
-| `dibs: burst` | The author opened `burst-threshold` or more pull requests anywhere on GitHub in the 24 hours up to and including this one |
 | `dibs: disclosure` | Only if you set `require-disclosure`: the description lacks the AI-use line your guide asks for |
 
 | Input | Default | |
@@ -58,12 +57,14 @@ When a pull request overlaps earlier work, dibs posts one comment, keeps it up t
 | `comment` | `true` | Post and update the comment |
 | `labels` | `true` | Add and remove the `dibs:` labels |
 | `claim-days` | `21` | How long an "I'd like to work on this" comment counts as a claim |
-| `burst-threshold` | `10` | `0` turns the burst check off |
+| `burst-threshold` | `0` (off) | Notes authors who opened pull requests in at least this many other repositories in the past day; see below |
 | `require-disclosure` | empty | A regular expression the description must match, such as `^Assisted-by:` |
 | `exempt-associations` | `OWNER,MEMBER,COLLABORATOR` | Authors who are never checked |
 | `fail-on` | empty | Kinds that fail the check, such as `duplicate,claimed` |
 
 The `signals` output lists the kinds found, comma-separated.
+
+**The burst note is off by default, and never public.** Opening many pull requests in a day is often fine: a change split into small parts, the same fix sent to several projects. A flood of pull requests to unrelated projects is a pattern maintainers do watch for, but it says something about the person, not about this pull request. So when you turn it on with `burst-threshold`, dibs counts only *other* repositories, and writes the note to the run's log and job summary and to the `signals` output. It never puts it in the comment or a label on the pull request.
 
 - **Safe on `pull_request_target`.** dibs never checks out or runs the pull request's code. It reads the issue and pull request history through the API, then writes one comment and labels. `pull_request_target` is what lets it comment on pull requests from forks.
 - Owners, members, collaborators and bots are never checked, and nobody is @-mentioned.
@@ -136,7 +137,7 @@ python3 skills/dibs/scripts/dibs.py pr --repo OWNER/REPO --number 456 --dry-run
 - Claims are recognized in English only: "I'd like to work on this", "can I take this?", "/assign", "I'm on it" and similar. dibs quotes every claim it finds, so you can judge them yourself.
 - A pull request is linked to an issue only if it mentions the issue somewhere, which GitHub records on the issue's timeline.
 - dibs looks for guides at the usual paths: `CONTRIBUTING` and `AI_POLICY` files at the root, in `.github/` and in `docs/`. A policy that lives only on a documentation site is missed.
-- The burst check counts public pull requests, plus any the token can see.
+- The burst note counts public pull requests, plus any the token can see.
 
 ## Development
 

@@ -19,8 +19,8 @@ inputs:
     description: How many days an "I'd like to work on this" comment counts as a claim.
     default: "21"
   burst-threshold:
-    description: Flag authors who opened at least this many pull requests anywhere on GitHub in the 24 hours up to this one. 0 turns it off.
-    default: "10"
+    description: Off (0) by default. A number notes authors who opened pull requests in at least that many other repositories in the 24 hours up to this one. The note goes to the run's log, job summary and signals output only, never onto the pull request.
+    default: "0"
   require-disclosure:
     description: 'A regular expression the description must match, for projects whose guide asks contributors to disclose AI use, such as "^Assisted-by:". Empty turns it off.'
     default: ""
@@ -28,7 +28,7 @@ inputs:
     description: Authors with these associations are never checked.
     default: OWNER,MEMBER,COLLABORATOR
   fail-on:
-    description: Kinds of overlap that fail the check, comma-separated (duplicate, claimed, assigned, already-fixed, burst, disclosure). Empty never fails.
+    description: Kinds that fail the check, comma-separated (duplicate, claimed, assigned, already-fixed, disclosure, burst). Empty never fails.
     default: ""
 
 outputs:

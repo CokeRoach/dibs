@@ -95,6 +95,9 @@ STOP_LABELS = {"wontfix", "won't fix", "invalid", "duplicate", "not planned"}
 ASK_LABELS = {"needs triage", "needs-triage", "triage", "needs discussion", "needs design",
               "blocked", "on hold", "awaiting decision", "question"}
 WELCOME_LABELS = {"good first issue", "help wanted", "contributions welcome", "up for grabs"}
+# Signals about the author rather than the work. They are never posted on the pull request: they go
+# to the run's log and job summary, and the `signals` output, for maintainers who turned them on.
+PRIVATE_KINDS = {"burst"}
 
 
 # ---------------------------------------------------------------------------------- GitHub API
@@ -467,13 +470,22 @@ def pr_signals(gh: GitHub, repo: str, pr: dict, claim_days: float, burst_thresho
     if burst_threshold > 0:
         # The day before this PR, not before now, so a later run on the same PR finds the same count.
         window = f"{created - dt.timedelta(hours=24):%Y-%m-%dT%H:%M:%SZ}..{created:%Y-%m-%dT%H:%M:%SZ}"
-        found = gh.get("/search/issues", {"q": f"type:pr author:{author} created:{window}", "per_page": 100})
-        total = found.get("total_count", 0)
-        if total >= burst_threshold:
-            items = found.get("items", [])
-            repos = {i.get("repository_url", "").rsplit("/repos/", 1)[-1] for i in items}
-            signals.append(Signal("burst", f"`{author}` opened {total} pull requests in the 24 hours up to and including this one, "
-                                  f"across {'at least ' if total > len(items) else ''}{len(repos)} repositories."))
+        try:
+            found = gh.get("/search/issues", {"q": f"type:pr author:{author} created:{window}", "per_page": 100})
+        except GitHubError as err:
+            # An optional note: losing it must not lose the overlap found above. Search has its own,
+            # smaller rate limit.
+            print(f"dibs: skipped the burst note: {err}", file=sys.stderr)
+            found = {}
+        items = found.get("items", [])
+        # Only other repositories count: a change split into several small PRs to one project is
+        # good practice, not a burst.
+        elsewhere = {i.get("repository_url", "").rsplit("/repos/", 1)[-1].lower() for i in items} - {repo.lower()}
+        if len(elsewhere) >= burst_threshold:
+            total = found.get("total_count", 0)
+            more = "at least " if total > len(items) else ""
+            signals.append(Signal("burst", f"`{author}` opened {total} pull requests in the 24 hours up to and "
+                                  f"including this one, in {more}{len(elsewhere)} other repositories."))
     if disclosure and not re.search(disclosure, pr.get("body") or "", re.I | re.M):
         signals.append(Signal("disclosure", "The description has no AI-use disclosure line, which this "
                               "project's contributing guide asks for."))
@@ -510,7 +522,7 @@ def _ago(a: dt.datetime, b: dt.datetime) -> str:
 def render_comment(signals: list[Signal], pr_number: int) -> str:
     lines = [MARKER, "Thanks for the pull request. Before review, here is some overlap a maintainer will want to know about:", ""]
     titles = {"duplicate": "Earlier pull request", "claimed": "Claimed issue", "assigned": "Assigned issue",
-              "already-fixed": "Already fixed", "burst": "Many pull requests at once", "disclosure": "AI-use disclosure"}
+              "already-fixed": "Already fixed", "burst": "Pull requests in many repositories", "disclosure": "AI-use disclosure"}
     for s in signals:
         lines.append(f"- **{titles.get(s.kind, s.kind)}:** {s.text}")
     lines += ["", "If this PR takes a different approach, say how in the description. If it overlaps, consider "
@@ -590,7 +602,12 @@ def cmd_pr(args) -> int:
     signals, issues = pr_signals(gh, repo, pr, args.claim_days, args.burst, args.disclosure or None)
     kinds = sorted({s.kind for s in signals})
     _set_output("signals", ",".join(kinds))
-    body = render_comment(signals, pr["number"]) if signals else ""
+    public = [s for s in signals if s.kind not in PRIVATE_KINDS]
+    private = [s for s in signals if s.kind in PRIVATE_KINDS]
+    body = render_comment(public, pr["number"]) if public else ""
+    _write_summary(repo, pr["number"], public, private)
+    for s in private:
+        print(f"dibs: for maintainers, not posted on the pull request: {s.text.replace('`', '')}")
     if args.dry_run:
         print(f"dibs: {repo}#{pr['number']} refers to issues {issues or 'none'}; signals: {kinds or 'none'}")
         if body:
@@ -600,7 +617,8 @@ def cmd_pr(args) -> int:
         if args.comment:
             _sync_comment(gh, repo, pr["number"], body)
         if args.labels:
-            _sync_labels(gh, repo, pr["number"], kinds, [l["name"] for l in pr.get("labels", [])])
+            _sync_labels(gh, repo, pr["number"], sorted({s.kind for s in public}),
+                         [l["name"] for l in pr.get("labels", [])])
     except GitHubError as err:
         # Usually a read-only token: the `pull_request` event gives one for pull requests from forks.
         print(f"::warning title=dibs could not write to the pull request::{err}. Run dibs on "
@@ -636,6 +654,24 @@ def _sync_labels(gh: GitHub, repo: str, number: int, kinds: list[str], current: 
         gh.request("DELETE", f"/repos/{repo}/issues/{number}/labels/{urllib.parse.quote(label)}")
 
 
+def _write_summary(repo: str, number: int, public: list[Signal], private: list[Signal]) -> None:
+    """The job summary on the workflow run's page, which maintainers read and the PR does not show."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    lines = [f"### dibs: {repo}#{number}", ""]
+    titles = {"duplicate": "Earlier pull request", "claimed": "Claimed issue", "assigned": "Assigned issue",
+              "already-fixed": "Already fixed", "disclosure": "AI-use disclosure", "burst": "Pull requests in many repositories"}
+    for s in public:
+        lines.append(f"- **{titles.get(s.kind, s.kind)}:** {s.text}")
+    for s in private:
+        lines.append(f"- **{titles.get(s.kind, s.kind)}** (not posted on the pull request): {s.text}")
+    if not public and not private:
+        lines.append("No overlap with earlier work found.")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def _set_output(name: str, value: str) -> None:
     path = os.environ.get("GITHUB_OUTPUT")
     if path:
@@ -662,8 +698,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--number", type=int)
     p.add_argument("--token", default=os.environ.get("INPUT_TOKEN"))
     p.add_argument("--claim-days", type=float, default=float(os.environ.get("INPUT_CLAIM_DAYS") or 21))
-    p.add_argument("--burst", type=int, default=int(os.environ.get("INPUT_BURST_THRESHOLD") or 10),
-                   help="flag authors who opened this many PRs in 24 hours (0 = off)")
+    p.add_argument("--burst", type=int, default=int(os.environ.get("INPUT_BURST_THRESHOLD") or 0),
+                   help="note, for maintainers only, authors who opened PRs in at least this many other "
+                        "repositories in the 24 hours up to this one (default 0 = off)")
     p.add_argument("--disclosure", default=os.environ.get("INPUT_REQUIRE_DISCLOSURE", ""),
                    help="regular expression the description must contain, e.g. 'Assisted-by:|Generated-by:'")
     p.add_argument("--exempt", default=os.environ.get("INPUT_EXEMPT_ASSOCIATIONS") or "OWNER,MEMBER,COLLABORATOR")

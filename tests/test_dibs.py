@@ -218,16 +218,18 @@ def pr(number=20, login="newbie", at="2026-11-24T00:00:00Z", body="Fixes #1", as
             "author_association": association, "labels": []}
 
 
-def pr_gh(comments=(), timeline=(), search_total=0, **kw):
+def pr_gh(comments=(), timeline=(), search_total=0, repos=7, **kw):
+    """``search_total`` PRs by the author spread over ``repos`` other repositories (0 = all in REPO)."""
+    where = (lambda i: f"o/r{i % repos}") if repos else (lambda i: REPO)
     return FakeGitHub({f"/repos/{REPO}/issues/1": issue(**kw),
                        f"/repos/{REPO}/issues/1/comments": list(comments),
                        f"/repos/{REPO}/issues/1/timeline": list(timeline),
                        "/search/issues": {"total_count": search_total,
-                                          "items": [{"repository_url": f"https://api.github.com/repos/o/r{i % 7}"}
+                                          "items": [{"repository_url": f"https://api.github.com/repos/{where(i)}"}
                                                     for i in range(min(search_total, 100))]}})
 
 
-def signals(gh, the_pr, disclosure=None, burst=10):
+def signals(gh, the_pr, disclosure=None, burst=0):
     found, _ = dibs.pr_signals(gh, REPO, the_pr, 21, burst, disclosure)
     return found
 
@@ -250,18 +252,40 @@ def test_claims_before_the_pr_count_and_after_do_not():
 
 def test_already_fixed_assigned_burst_and_disclosure():
     gh = pr_gh(timeline=[xref(9, "dora", "2026-11-01T00:00:00Z", merged=True)], assignees=["erin"], search_total=37)
-    kinds = [s.kind for s in signals(gh, pr(body="Fixes #1"), disclosure=r"^Assisted-by:")]
+    kinds = [s.kind for s in signals(gh, pr(body="Fixes #1"), disclosure=r"^Assisted-by:", burst=5)]
     assert kinds == ["already-fixed", "assigned", "burst", "disclosure"]
-    assert signals(gh, pr(body="Fixes #1\nAssisted-by: Claude"), disclosure=r"^Assisted-by:", burst=0)[-1].kind != "disclosure"
+    assert signals(gh, pr(body="Fixes #1\nAssisted-by: Claude"), disclosure=r"^Assisted-by:")[-1].kind != "disclosure"
 
 
-def test_burst_counts_the_day_before_the_pr_not_before_now():
+def test_burst_counts_other_repositories_in_the_day_before_the_pr():
     gh = pr_gh(search_total=12)
-    found = signals(gh, pr(at="2026-11-20T08:00:00Z"))
+    found = signals(gh, pr(at="2026-11-20T08:00:00Z"), burst=5)
     query = next(params["q"] for path, params in gh.queries if path == "/search/issues")
-    assert "created:2026-11-19T08:00:00Z..2026-11-20T08:00:00Z" in query
+    assert "created:2026-11-19T08:00:00Z..2026-11-20T08:00:00Z" in query  # not "before now"
     assert [s.kind for s in found] == ["burst"]
-    assert "12 pull requests in the 24 hours up to and including this one, across 7 repositories" in found[0].text
+    assert "12 pull requests in the 24 hours up to and including this one, in 7 other repositories" in found[0].text
+    assert signals(gh, pr(), burst=8) == []
+
+
+def test_a_failed_burst_search_keeps_the_other_signals(capsys):
+    gh = pr_gh(timeline=[xref(15, "alice", "2026-11-22T00:00:00Z")])
+    del gh.data["/search/issues"]  # the fake answers "not found"; GitHub's search limit behaves alike
+    assert [s.kind for s in signals(gh, pr(), burst=3)] == ["duplicate"]
+    assert "skipped the burst note" in capsys.readouterr().err
+
+
+def test_many_prs_to_the_same_project_are_not_a_burst():
+    gh = pr_gh(search_total=15, repos=0)  # a change split into small PRs, all to this repository
+    assert signals(gh, pr(), burst=1) == []
+
+
+def test_burst_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("INPUT_BURST_THRESHOLD", raising=False)
+    gh = pr_gh(search_total=50, repos=20)
+    gh.data[f"/repos/{REPO}/pulls/20"] = pr()
+    monkeypatch.setattr(dibs, "GitHub", lambda token=None: gh)
+    assert dibs.main(["pr", "--repo", REPO, "--number", "20", "--dry-run"]) == 0
+    assert not any(path == "/search/issues" for path, _ in gh.queries)
 
 
 def test_comment_is_marked_and_pings_nobody():
@@ -288,7 +312,9 @@ def run_action(monkeypatch, tmp_path, gh, the_pr, *args, existing=()):
 @pytest.fixture(autouse=True)
 def pinned_clock(monkeypatch):
     monkeypatch.setenv("DIBS_NOW", NOW)
-    for name in ("INPUT_FAIL_ON", "INPUT_REQUIRE_DISCLOSURE", "INPUT_COMMENT", "INPUT_LABELS"):
+    # Tests may run inside GitHub Actions: never read its inputs or write to its output files.
+    for name in ("INPUT_FAIL_ON", "INPUT_REQUIRE_DISCLOSURE", "INPUT_COMMENT", "INPUT_LABELS", "INPUT_BURST_THRESHOLD",
+                 "GITHUB_EVENT_PATH", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -325,6 +351,26 @@ def test_action_can_fail_the_check(monkeypatch, tmp_path):
     gh = pr_gh(timeline=[xref(15, "alice", "2026-11-22T00:00:00Z")])
     code, _ = run_action(monkeypatch, tmp_path, gh, pr(), "--fail-on", "duplicate", "--no-comment", "--no-labels")
     assert code == 1
+
+
+def test_burst_is_never_posted_on_the_pull_request(monkeypatch, tmp_path, capsys):
+    gh = pr_gh(search_total=12)
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    code, out = run_action(monkeypatch, tmp_path, gh, pr(), "--burst", "3")
+    assert code == 0 and "signals=burst" in out  # available to the maintainer's own workflow
+    assert gh.sent == []  # no comment, no label
+    assert "not posted on the pull request" in summary.read_text(encoding="utf-8")
+    assert "not posted on the pull request" in capsys.readouterr().out
+
+
+def test_burst_stays_off_the_comment_next_to_public_overlap(monkeypatch, tmp_path):
+    gh = pr_gh(timeline=[xref(15, "alice", "2026-11-22T00:00:00Z")], search_total=12)
+    code, out = run_action(monkeypatch, tmp_path, gh, pr(), "--burst", "3")
+    assert "signals=burst,duplicate" in out
+    comment_body, labels = gh.sent[0][2]["body"], gh.sent[1][2]["labels"]
+    assert "Earlier pull request" in comment_body and "repositories" not in comment_body
+    assert labels == ["dibs: duplicate"]
 
 
 def test_read_only_token_warns_instead_of_failing(monkeypatch, tmp_path, capsys):
