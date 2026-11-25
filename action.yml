@@ -1,5 +1,5 @@
 name: dibs PR overlap check
-description: Tells maintainers when a pull request duplicates an earlier one or takes an issue someone else claimed. Facts from the issue history; it never guesses who or what wrote the code.
+description: Tells maintainers when a pull request duplicates earlier work or takes an issue someone else claimed. No AI detection.
 author: CokeRoach
 branding:
   icon: flag

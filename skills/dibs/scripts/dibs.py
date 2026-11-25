@@ -30,7 +30,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
 RAW = "https://raw.githubusercontent.com"
