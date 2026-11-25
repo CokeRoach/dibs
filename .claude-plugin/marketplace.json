@@ -1,0 +1,15 @@
+{
+  "name": "cokeroach-dibs",
+  "description": "dibs: check whether anyone is already working on an issue, and contribute the way the project's maintainers ask.",
+  "owner": {
+    "name": "CokeRoach",
+    "url": "https://github.com/CokeRoach"
+  },
+  "plugins": [
+    {
+      "name": "dibs",
+      "source": "./",
+      "description": "Before contributing to someone else's open-source project, check whether anyone is already on the issue and what the project's rules say about AI, then contribute the way its maintainers ask."
+    }
+  ]
+}

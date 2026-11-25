@@ -1,0 +1,12 @@
+{
+  "name": "dibs",
+  "description": "Before contributing to someone else's open-source project, check whether anyone is already on the issue and what the project's rules say about AI, then contribute the way its maintainers ask.",
+  "author": {
+    "name": "CokeRoach",
+    "url": "https://github.com/CokeRoach"
+  },
+  "homepage": "https://github.com/CokeRoach/dibs",
+  "repository": "https://github.com/CokeRoach/dibs",
+  "license": "MIT",
+  "keywords": ["open-source", "github", "contributing", "pull-requests", "maintainers"]
+}

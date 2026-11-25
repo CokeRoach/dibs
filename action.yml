@@ -1,0 +1,54 @@
+name: dibs PR overlap check
+description: Tells maintainers when a pull request duplicates an earlier one or takes an issue someone else claimed. Facts from the issue history; it never guesses who or what wrote the code.
+author: CokeRoach
+branding:
+  icon: flag
+  color: orange
+
+inputs:
+  token:
+    description: Token for reading issues and writing the comment and labels.
+    default: ${{ github.token }}
+  comment:
+    description: Post one comment listing the overlap, and keep it up to date on later runs.
+    default: "true"
+  labels:
+    description: 'Add a "dibs: <kind>" label for each kind of overlap found, and remove it when the overlap is gone.'
+    default: "true"
+  claim-days:
+    description: How many days an "I'd like to work on this" comment counts as a claim.
+    default: "21"
+  burst-threshold:
+    description: Flag authors who opened at least this many pull requests anywhere on GitHub in the 24 hours up to this one. 0 turns it off.
+    default: "10"
+  require-disclosure:
+    description: 'A regular expression the description must match, for projects whose guide asks contributors to disclose AI use, such as "^Assisted-by:". Empty turns it off.'
+    default: ""
+  exempt-associations:
+    description: Authors with these associations are never checked.
+    default: OWNER,MEMBER,COLLABORATOR
+  fail-on:
+    description: Kinds of overlap that fail the check, comma-separated (duplicate, claimed, assigned, already-fixed, burst, disclosure). Empty never fails.
+    default: ""
+
+outputs:
+  signals:
+    description: The kinds of overlap found, comma-separated; empty when there were none.
+    value: ${{ steps.dibs.outputs.signals }}
+
+runs:
+  using: composite
+  steps:
+    - id: dibs
+      shell: bash
+      run: |
+        "$(command -v python3 || command -v python)" "$GITHUB_ACTION_PATH/skills/dibs/scripts/dibs.py" pr
+      env:
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_LABELS: ${{ inputs.labels }}
+        INPUT_CLAIM_DAYS: ${{ inputs.claim-days }}
+        INPUT_BURST_THRESHOLD: ${{ inputs.burst-threshold }}
+        INPUT_REQUIRE_DISCLOSURE: ${{ inputs.require-disclosure }}
+        INPUT_EXEMPT_ASSOCIATIONS: ${{ inputs.exempt-associations }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}

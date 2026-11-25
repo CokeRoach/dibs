@@ -1,0 +1,26 @@
+name: dibs
+
+# dibs checks the pull requests sent to dibs.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: dibs-${{ github.event.pull_request.number }}
+
+jobs:
+  dibs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # On pull_request_target this checks out the base branch, so the action runs as it is on main,
+      # never the pull request's own code.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./

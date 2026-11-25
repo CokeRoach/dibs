@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: stops-on-claimed-issue
+expected_outcome: |
+  The issue already has open pull requests by other people, and others said they would take it.
+  The agent finds this before writing code, tells the user who is on it with links, writes no
+  competing fix, and suggests something useful instead: reviewing or testing an existing pull
+  request, or picking another issue. Nothing is posted to GitHub.
