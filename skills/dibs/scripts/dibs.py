@@ -30,7 +30,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 API = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
 RAW = "https://raw.githubusercontent.com"
@@ -402,8 +402,9 @@ def check_verdict(facts: IssueFacts, me: str | None, claim_days: float, at: dt.d
         if others(login):
             stop.append(f"assigned to {login}")
     open_pr_authors = {p.login for p in facts.prs if p.state == "open" and p.repo.lower() == facts.repo.lower()}
+    ended = finished_claimants(facts, facts.repo)
     for claim in facts.claims:
-        if not others(claim.login) or claim.released:
+        if not others(claim.login) or claim.released or claim.login in ended:
             continue
         age = days_between(parse_time(claim.at), at)
         if age <= claim_days or claim.login in open_pr_authors:
@@ -423,6 +424,15 @@ def check_verdict(facts: IssueFacts, me: str | None, claim_days: float, at: dt.d
         notes.append(note)
     # Under STOP, the ASK reasons still help: a PR closed as a duplicate says how the maintainers decide.
     return verdict, stop + ask, notes
+
+
+def finished_claimants(facts: IssueFacts, repo: str) -> set[str]:
+    """People whose own pull request for the issue was closed or merged, with none still open.
+
+    Their claim ended with that pull request, which is reported on its own; counting the claim as
+    well would say they are still on it."""
+    here = [p for p in facts.prs if p.repo.lower() == repo.lower()]
+    return {p.login for p in here if p.state in ("closed", "merged")} - {p.login for p in here if p.state == "open"}
 
 
 @dataclass
@@ -460,9 +470,10 @@ def pr_signals(gh: GitHub, repo: str, pr: dict, claim_days: float, burst_thresho
             if login != author:
                 signals.append(Signal("assigned", f"#{number} is assigned to `{login}`."))
         open_pr_authors = {p.login for p in facts.prs if p.state == "open"}
+        ended = finished_claimants(facts, repo)
         for claim in facts.claims:
             claimed = parse_time(claim.at)
-            if claim.login == author or claim.released or claimed > created:
+            if claim.login == author or claim.released or claimed > created or claim.login in ended:
                 continue
             if days_between(claimed, created) <= claim_days or claim.login in open_pr_authors:
                 signals.append(Signal("claimed", f"`{claim.login}` said they would take #{number} "

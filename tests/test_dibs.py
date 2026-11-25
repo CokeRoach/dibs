@@ -267,6 +267,24 @@ def test_burst_counts_other_repositories_in_the_day_before_the_pr():
     assert signals(gh, pr(), burst=8) == []
 
 
+def test_a_claim_ends_when_the_claimants_own_pr_is_closed():
+    f = facts_for(comments=[comment("bob", "I'd like to work on this", "2026-11-23T00:00:00Z")],
+                  timeline=[xref(6, "bob", "2026-11-23T05:00:00Z", state="closed")])
+    v, reasons, _ = verdict(f)
+    assert v == dibs.ASK  # the closed PR still says: read why it was closed
+    assert not any("said they would take it" in r for r in reasons)
+    assert any("PR #6 by bob was closed without merging" in r for r in reasons)
+
+
+def test_pr_check_drops_claims_whose_pr_was_closed_but_keeps_a_new_attempt():
+    claim = comment("bob", "I'd like to work on this", "2026-11-23T00:00:00Z")
+    closed = xref(6, "bob", "2026-11-23T05:00:00Z", state="closed")
+    assert signals(pr_gh(comments=[claim], timeline=[closed]), pr()) == []
+    retry = xref(7, "bob", "2026-11-23T09:00:00Z")  # bob opened another one: still on it
+    kinds = [s.kind for s in signals(pr_gh(comments=[claim], timeline=[closed, retry]), pr())]
+    assert kinds == ["duplicate", "claimed"]
+
+
 def test_a_failed_burst_search_keeps_the_other_signals(capsys):
     gh = pr_gh(timeline=[xref(15, "alice", "2026-11-22T00:00:00Z")])
     del gh.data["/search/issues"]  # the fake answers "not found"; GitHub's search limit behaves alike
